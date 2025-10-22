@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { pickRandomEnemy, type EnemyData } from '../data/enemies';
+import { PARTY_MEMBERS } from '../data/party';
 
 export class GameScene extends Phaser.Scene {
   private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
@@ -9,6 +10,7 @@ export class GameScene extends Phaser.Scene {
   private enemySprite?: Phaser.GameObjects.Image;
   private enemyDialog?: Phaser.GameObjects.Text;
   private enemyInfo?: Phaser.GameObjects.Text;
+  private battleObjects: Phaser.GameObjects.GameObject[] = [];
 
   constructor() {
     super({ key: 'GameScene' });
@@ -172,37 +174,27 @@ export class GameScene extends Phaser.Scene {
 
   private showEnemy(enemy: EnemyData): void {
     const centerX = 160;
-    const centerY = 80;
+    const centerY = 82;
+
+    this.clearBattleObjects();
 
     this.enemySprite?.destroy();
     this.enemyDialog?.destroy();
     this.enemyInfo?.destroy();
 
-    this.enemySprite = this.add.image(centerX, centerY, enemy.spriteKey).setOrigin(0.5).setScale(2.5);
+    this.createBattleLayout(enemy);
 
-    const dialog = `${enemy.name} が現れた！\n${enemy.quote}`;
-    this.enemyDialog = this.add.text(centerX, 132, dialog, {
-      fontFamily: 'monospace',
-      fontSize: '12px',
-      color: '#f5f6ff',
-      align: 'center',
-      backgroundColor: '#1a2340',
-      padding: { left: 6, right: 6, top: 4, bottom: 4 }
-    }).setOrigin(0.5);
-
-    const infoText = `外見: ${enemy.appearance}\n特徴: ${enemy.trait}\n弱点: ${enemy.weakness}`;
-    this.enemyInfo = this.add.text(8, 150, infoText, {
-      fontFamily: 'monospace',
-      fontSize: '10px',
-      color: '#cde3ff'
-    }).setOrigin(0, 0);
+    this.enemySprite = this.add
+      .image(centerX, centerY, enemy.spriteKey)
+      .setOrigin(0.5)
+      .setScale(2.8)
+      .setDepth(4);
   }
 
   private endEncounter(): void {
     this.encounterActive = false;
+    this.clearBattleObjects();
     this.enemySprite?.destroy();
-    this.enemyDialog?.destroy();
-    this.enemyInfo?.destroy();
     this.enemySprite = undefined;
     this.enemyDialog = undefined;
     this.enemyInfo = undefined;
@@ -211,5 +203,103 @@ export class GameScene extends Phaser.Scene {
 
   private resetEncounterTimer(): void {
     this.encounterTimer = Phaser.Math.Between(4500, 7500);
+  }
+
+  private createBattleLayout(enemy: EnemyData): void {
+    const overlay = this.add
+      .rectangle(160, 90, 320, 180, 0x050a1a, 0.82)
+      .setDepth(1);
+    this.registerBattleObject(overlay);
+
+    const panelColor = 0x111d3a;
+    const borderColor = 0x3a5abf;
+
+    const partyPanel = this.add
+      .rectangle(160, 42, 300, 72, panelColor, 0.92)
+      .setDepth(2)
+      .setStrokeStyle(1, borderColor, 0.9);
+    this.registerBattleObject(partyPanel);
+
+    const partyHeader = 'なまえ　   しょくぎょう   H    M';
+    const partyStatus = PARTY_MEMBERS.map((member) => {
+      const hp = member.hp.toString().padStart(3, ' ');
+      const mp = member.mp.toString().padStart(3, ' ');
+      return `${member.name.padEnd(6, '　')} ${member.job.padEnd(8, '　')} H${hp} M${mp}`;
+    }).join('\n');
+
+    const partyText = this.add
+      .text(28, 16, `${partyHeader}\n${partyStatus}`, {
+        fontFamily: 'monospace',
+        fontSize: '12px',
+        color: '#e9edff',
+        lineSpacing: 4
+      })
+      .setDepth(3);
+    this.registerBattleObject(partyText);
+
+    const commandsPanel = this.add
+      .rectangle(24, 112, 140, 64, panelColor, 0.92)
+      .setOrigin(0, 0)
+      .setDepth(2)
+      .setStrokeStyle(1, borderColor, 0.9);
+    this.registerBattleObject(commandsPanel);
+
+    const commandOptions = ['こうげき', 'どうぐ', 'じゅもん', 'ぼうぎょ', 'にげる'];
+    commandOptions.forEach((option, index) => {
+      const column = index % 2;
+      const row = Math.floor(index / 2);
+      const commandText = this.add
+        .text(36 + column * 70, 122 + row * 18, option, {
+          fontFamily: 'monospace',
+          fontSize: '12px',
+          color: '#f9f7ff'
+        })
+        .setDepth(3);
+      this.registerBattleObject(commandText);
+    });
+
+    const enemyPanel = this.add
+      .rectangle(176, 112, 120, 64, panelColor, 0.92)
+      .setOrigin(0, 0)
+      .setDepth(2)
+      .setStrokeStyle(1, borderColor, 0.9);
+    this.registerBattleObject(enemyPanel);
+
+    this.enemyInfo = this.add
+      .text(188, 122, `${enemy.name}\n外見: ${enemy.appearance}\n弱点: ${enemy.weakness}`, {
+        fontFamily: 'monospace',
+        fontSize: '11px',
+        color: '#d6e4ff',
+        wordWrap: { width: 100 }
+      })
+      .setDepth(3);
+    this.registerBattleObject(this.enemyInfo);
+
+    const messagePanel = this.add
+      .rectangle(160, 162, 300, 44, panelColor, 0.92)
+      .setDepth(2)
+      .setStrokeStyle(1, borderColor, 0.9);
+    this.registerBattleObject(messagePanel);
+
+    const dialog = `${enemy.name} が あらわれた！\n${enemy.quote}`;
+    this.enemyDialog = this.add
+      .text(32, 146, dialog, {
+        fontFamily: 'monospace',
+        fontSize: '12px',
+        color: '#f5f6ff',
+        wordWrap: { width: 256 }
+      })
+      .setDepth(3);
+    this.registerBattleObject(this.enemyDialog);
+  }
+
+  private registerBattleObject<T extends Phaser.GameObjects.GameObject>(object: T): T {
+    this.battleObjects.push(object);
+    return object;
+  }
+
+  private clearBattleObjects(): void {
+    this.battleObjects.forEach((object) => object.destroy());
+    this.battleObjects = [];
   }
 }
