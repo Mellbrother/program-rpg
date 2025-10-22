@@ -1,14 +1,31 @@
 import Phaser from 'phaser';
 import { pickRandomEnemy, type EnemyData } from '../data/enemies';
 
+const FULL_WIDTH_SPACE = '\u3000';
+
 export class GameScene extends Phaser.Scene {
   private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
   private player!: Phaser.Physics.Arcade.Sprite;
   private encounterTimer = 0;
   private encounterActive = false;
   private enemySprite?: Phaser.GameObjects.Image;
-  private enemyDialog?: Phaser.GameObjects.Text;
+  private battleMessage?: Phaser.GameObjects.Text;
   private enemyInfo?: Phaser.GameObjects.Text;
+  private battleBackdrop?: Phaser.GameObjects.Rectangle;
+  private actionPrompt?: Phaser.GameObjects.Text;
+  private partyStatusPanel?: Phaser.GameObjects.Rectangle;
+  private partyStatusTexts: Phaser.GameObjects.Text[] = [];
+  private enemyTauntBubble?: Phaser.GameObjects.Text;
+  private attackKey!: Phaser.Input.Keyboard.Key;
+  private currentEnemy?: EnemyData;
+  private tauntTimerEvent?: Phaser.Time.TimerEvent;
+  private tauntIndex = 0;
+  private isAwaitingAttack = false;
+  private readonly partyMembers = [
+    { name: 'プレイヤー', hp: 36, mp: 14, condition: 'ふつう' },
+    { name: 'AIアーキ', hp: 30, mp: 22, condition: '集中' },
+    { name: 'デバッガ', hp: 24, mp: 28, condition: '冷静' }
+  ];
 
   constructor() {
     super({ key: 'GameScene' });
@@ -32,9 +49,10 @@ export class GameScene extends Phaser.Scene {
     this.physics.world.setBounds(0, 0, 320, 180);
 
     this.cursors = this.input.keyboard.createCursorKeys();
+    this.attackKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
 
     this.add
-      .text(8, 8, '矢印キー: 移動 / フィールドを探索しよう', {
+      .text(8, 8, '矢印キー: 移動 / フィールドを探索しよう\nスペースキー: こうげき', {
         fontFamily: 'monospace',
         fontSize: '10px',
         color: '#e0e5ff'
@@ -51,6 +69,9 @@ export class GameScene extends Phaser.Scene {
 
     if (this.encounterActive) {
       this.player.setVelocity(0, 0);
+      if (this.isAwaitingAttack && Phaser.Input.Keyboard.JustDown(this.attackKey)) {
+        this.resolvePlayerAttack();
+      }
       return;
     }
 
@@ -161,13 +182,20 @@ export class GameScene extends Phaser.Scene {
 
   private startEncounter(): void {
     this.encounterActive = true;
-    const enemy = pickRandomEnemy();
+    this.currentEnemy = pickRandomEnemy();
+    this.tauntTimerEvent?.remove(false);
+    this.tauntTimerEvent = undefined;
+    this.isAwaitingAttack = true;
+    this.tauntIndex = 0;
 
-    this.showEnemy(enemy);
-
-    this.time.delayedCall(3600, () => {
-      this.endEncounter();
-    });
+    if (this.currentEnemy) {
+      this.showEnemy(this.currentEnemy);
+      this.time.delayedCall(1800, () => {
+        if (this.isAwaitingAttack) {
+          this.beginEnemyTaunts();
+        }
+      });
+    }
   }
 
   private showEnemy(enemy: EnemyData): void {
@@ -175,38 +203,189 @@ export class GameScene extends Phaser.Scene {
     const centerY = 80;
 
     this.enemySprite?.destroy();
-    this.enemyDialog?.destroy();
+    this.battleMessage?.destroy();
     this.enemyInfo?.destroy();
+    this.battleBackdrop?.destroy();
+    this.actionPrompt?.destroy();
+    this.enemyTauntBubble?.destroy();
+    this.partyStatusPanel?.destroy();
+    this.partyStatusTexts.forEach((text) => text.destroy());
+    this.partyStatusTexts = [];
 
-    this.enemySprite = this.add.image(centerX, centerY, enemy.spriteKey).setOrigin(0.5).setScale(2.5);
+    const enemyY = centerY - 20;
+
+    this.enemySprite = this.add
+      .image(centerX, enemyY, enemy.spriteKey)
+      .setOrigin(0.5)
+      .setScale(2.5)
+      .setDepth(1);
+
+    this.enemyTauntBubble = this.add
+      .text(centerX, enemyY - 50, '', {
+        fontFamily: 'monospace',
+        fontSize: '9px',
+        color: '#f1f4ff',
+        backgroundColor: '#111b2f',
+        padding: { left: 4, right: 4, top: 2, bottom: 2 },
+        align: 'center',
+        wordWrap: { width: 130, useAdvancedWrap: true }
+      })
+      .setOrigin(0.5, 1)
+      .setDepth(2)
+      .setVisible(false);
+
+    this.battleBackdrop = this.add
+      .rectangle(centerX, 150, 304, 60, 0x131b32, 0.92)
+      .setOrigin(0.5)
+      .setStrokeStyle(1, 0x3a4b6d, 0.8)
+      .setDepth(3);
 
     const dialog = `${enemy.name} が現れた！\n${enemy.quote}`;
-    this.enemyDialog = this.add.text(centerX, 132, dialog, {
-      fontFamily: 'monospace',
-      fontSize: '12px',
-      color: '#f5f6ff',
-      align: 'center',
-      backgroundColor: '#1a2340',
-      padding: { left: 6, right: 6, top: 4, bottom: 4 }
-    }).setOrigin(0.5);
+    this.battleMessage = this.add
+      .text(centerX, 136, dialog, {
+        fontFamily: 'monospace',
+        fontSize: '12px',
+        color: '#f5f6ff',
+        align: 'center',
+        backgroundColor: '#1a2340',
+        padding: { left: 6, right: 6, top: 4, bottom: 4 },
+        wordWrap: { width: 280, useAdvancedWrap: true }
+      })
+      .setOrigin(0.5)
+      .setDepth(4);
+
+    this.actionPrompt = this.add
+      .text(centerX, 168, 'スペースキー：こうげき', {
+        fontFamily: 'monospace',
+        fontSize: '10px',
+        color: '#c8d9ff',
+        align: 'center'
+      })
+      .setOrigin(0.5)
+      .setDepth(4);
 
     const infoText = `外見: ${enemy.appearance}\n特徴: ${enemy.trait}\n弱点: ${enemy.weakness}`;
-    this.enemyInfo = this.add.text(8, 150, infoText, {
-      fontFamily: 'monospace',
-      fontSize: '10px',
-      color: '#cde3ff'
-    }).setOrigin(0, 0);
+    this.enemyInfo = this.add
+      .text(190, 112, infoText, {
+        fontFamily: 'monospace',
+        fontSize: '10px',
+        color: '#cde3ff',
+        wordWrap: { width: 118, useAdvancedWrap: true }
+      })
+      .setOrigin(0, 0)
+      .setDepth(4);
+
+    this.partyStatusPanel = this.add
+      .rectangle(10, 176, 168, 66, 0x0b1224, 0.95)
+      .setOrigin(0, 1)
+      .setStrokeStyle(1, 0x3a4b6d, 0.9)
+      .setDepth(5);
+
+    this.partyStatusTexts = this.partyMembers.map((member, index) =>
+      this.add
+        .text(18, 118 + index * 16, this.formatPartyMember(member), {
+          fontFamily: 'monospace',
+          fontSize: '11px',
+          color: '#f7fbff'
+        })
+        .setOrigin(0, 0)
+        .setDepth(6)
+    );
+  }
+
+  private beginEnemyTaunts(): void {
+    const enemy = this.currentEnemy;
+    if (!enemy || enemy.taunts.length === 0) {
+      return;
+    }
+
+    this.tauntTimerEvent?.remove(false);
+
+    this.tauntTimerEvent = this.time.addEvent({
+      delay: 2600,
+      loop: true,
+      callback: () => {
+        if (!this.isAwaitingAttack) {
+          this.tauntTimerEvent?.remove(false);
+          this.tauntTimerEvent = undefined;
+          return;
+        }
+
+        const line = enemy.taunts[this.tauntIndex % enemy.taunts.length];
+        this.tauntIndex += 1;
+        this.showEnemyTaunt(`${enemy.name}「${line}」`);
+      }
+    });
+  }
+
+  private updateBattleMessage(message: string): void {
+    if (this.battleMessage) {
+      this.battleMessage.setText(message);
+    }
+  }
+
+  private showEnemyTaunt(line: string): void {
+    if (!this.enemyTauntBubble) {
+      return;
+    }
+
+    if (line.trim().length === 0) {
+      this.enemyTauntBubble.setVisible(false);
+      return;
+    }
+
+    this.enemyTauntBubble.setText(line).setVisible(true);
+  }
+
+  private resolvePlayerAttack(): void {
+    if (!this.currentEnemy || !this.isAwaitingAttack) {
+      return;
+    }
+
+    const enemy = this.currentEnemy;
+    this.isAwaitingAttack = false;
+    this.tauntTimerEvent?.remove(false);
+    this.tauntTimerEvent = undefined;
+
+    this.updateBattleMessage(`あなたのこうげき！\n${enemy.name} は ${enemy.weakness} に弱かった！`);
+    this.showEnemyTaunt('');
+    this.actionPrompt?.setText('バトル勝利！');
+
+    this.time.delayedCall(2200, () => {
+      this.endEncounter();
+    });
   }
 
   private endEncounter(): void {
     this.encounterActive = false;
     this.enemySprite?.destroy();
-    this.enemyDialog?.destroy();
+    this.battleMessage?.destroy();
     this.enemyInfo?.destroy();
+    this.battleBackdrop?.destroy();
+    this.actionPrompt?.destroy();
+    this.enemyTauntBubble?.destroy();
+    this.partyStatusPanel?.destroy();
+    this.partyStatusTexts.forEach((text) => text.destroy());
+    this.partyStatusTexts = [];
+    this.tauntTimerEvent?.remove(false);
     this.enemySprite = undefined;
-    this.enemyDialog = undefined;
+    this.battleMessage = undefined;
     this.enemyInfo = undefined;
+    this.battleBackdrop = undefined;
+    this.actionPrompt = undefined;
+    this.enemyTauntBubble = undefined;
+    this.partyStatusPanel = undefined;
+    this.currentEnemy = undefined;
+    this.tauntTimerEvent = undefined;
+    this.isAwaitingAttack = false;
+    this.attackKey.reset();
     this.resetEncounterTimer();
+  }
+
+  private formatPartyMember(member: { name: string; hp: number; mp: number; condition: string }): string {
+    const hp = member.hp.toString().padStart(3, ' ');
+    const mp = member.mp.toString().padStart(3, ' ');
+    return `${member.name.padEnd(6, FULL_WIDTH_SPACE)} HP${hp}  MP${mp}  ${member.condition}`;
   }
 
   private resetEncounterTimer(): void {
